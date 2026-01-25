@@ -15,6 +15,7 @@
  * rather than "UL" to the end.
  */
 
+#define UML_SIGSTKSZ 16384
 /* Some constant macros are used in both assembler and
  * C code.  Therefore we cannot annotate them always with
  * 'UL' and other type specifiers unilaterally.  We

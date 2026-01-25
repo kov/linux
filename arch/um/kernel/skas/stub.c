@@ -8,6 +8,7 @@
 #include <linux/futex.h>
 #include <sys/socket.h>
 #include <errno.h>
+#include <stddef.h>
 
 /*
  * Known security issues
@@ -117,6 +118,10 @@ stub_signal_interrupt(int sig, siginfo_t *info, void *p)
 	d->signal = sig;
 	d->si_offset = (unsigned long)info - (unsigned long)&d->sigstack[0];
 	d->mctx_offset = (unsigned long)&uc->uc_mcontext - (unsigned long)&d->sigstack[0];
+
+#ifdef __aarch64__
+	asm volatile("mrs %0, tpidr_el0" : "=r" (d->arch_data.tpidr_el0));
+#endif
 
 restart_wait:
 	d->futex = FUTEX_IN_KERN;

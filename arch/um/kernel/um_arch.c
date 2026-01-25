@@ -33,6 +33,7 @@
 #include <kern_util.h>
 #include <mem_user.h>
 #include <os.h>
+#include <skas.h>
 
 #include "um_arch.h"
 
@@ -83,12 +84,18 @@ static int show_cpuinfo(struct seq_file *m, void *v)
 	seq_printf(m, "model name\t: UML\n");
 	seq_printf(m, "mode\t\t: skas\n");
 	seq_printf(m, "host\t\t: %s\n", host_info);
+#ifdef CONFIG_X86
 	seq_printf(m, "fpu\t\t: %s\n", str_yes_no(cpu_has(&boot_cpu_data, X86_FEATURE_FPU)));
 	seq_printf(m, "flags\t\t:");
 	for (i = 0; i < 32*NCAPINTS; i++)
 		if (cpu_has(&boot_cpu_data, i) && (x86_cap_flags[i] != NULL))
 			seq_printf(m, " %s", x86_cap_flags[i]);
 	seq_printf(m, "\n");
+#else
+	/* ARM64 always has FPU (NEON/ASIMD) */
+	seq_printf(m, "fpu\t\t: yes\n");
+	seq_printf(m, "Features\t: fp asimd\n");
+#endif
 	seq_printf(m, "cache_alignment\t: %d\n", boot_cpu_data.cache_alignment);
 	seq_printf(m, "bogomips\t: %lu.%02lu\n",
 		   loops_per_jiffy/(500000/HZ),
@@ -266,11 +273,16 @@ unsigned long brk_start;
 
 static void __init parse_host_cpu_flags(char *line)
 {
+#ifdef CONFIG_X86
 	int i;
 	for (i = 0; i < 32*NCAPINTS; i++) {
 		if ((x86_cap_flags[i] != NULL) && strstr(line, x86_cap_flags[i]))
 			set_cpu_cap(&boot_cpu_data, i);
 	}
+#else
+	/* ARM64: Parse features from /proc/cpuinfo if needed */
+	/* For now, we assume basic features are always present */
+#endif
 }
 
 static void __init parse_cache_line(char *line)
@@ -328,7 +340,7 @@ int __init linux_main(int argc, char **argv, char **envp)
 
 	host_task_size = get_top_address(envp);
 	/* reserve a few pages for the stubs */
-	stub_start = host_task_size - STUB_SIZE;
+	stub_start = host_task_size - (unsigned long)STUB_SIZE;
 	host_task_size = stub_start;
 
 	/* Limit TASK_SIZE to what is addressable by the page table */

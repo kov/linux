@@ -7,10 +7,12 @@
 #define __REGISTERS_H
 
 #include <sysdep/ptrace.h>
+#include <sysdep/archsetjmp.h>
 
 extern int init_pid_registers(int pid);
 extern void get_safe_registers(unsigned long *regs, unsigned long *fp_regs);
 extern int get_fp_registers(int pid, unsigned long *regs);
 extern int put_fp_registers(int pid, unsigned long *regs);
+extern unsigned long get_thread_reg(int reg, jmp_buf *buf);
 
 #endif

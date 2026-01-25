@@ -56,8 +56,6 @@ struct stub_data {
 	long err;
 
 	int syscall_data_len;
-	/* 128 leaves enough room for additional fields in the struct */
-	struct stub_syscall syscall_data[(UM_KERN_PAGE_SIZE - 128) / sizeof(struct stub_syscall)] __aligned(16);
 
 	/* data shared with signal handler (only used in seccomp mode) */
 	short restart_wait;
@@ -65,9 +63,15 @@ struct stub_data {
 	int signal;
 	unsigned short si_offset;
 	unsigned short mctx_offset;
+#ifdef __aarch64__
+	unsigned long debug_signal_handler;
+#endif
 
 	/* seccomp architecture specific state restore */
 	struct stub_data_arch arch_data;
+
+	/* 128 leaves enough room for additional fields in the struct */
+	struct stub_syscall syscall_data[(UM_KERN_PAGE_SIZE - 128) / sizeof(struct stub_syscall)] __aligned(16);
 
 	/* Stack for our signal handlers and for calling into . */
 	unsigned char sigstack[UM_KERN_PAGE_SIZE] __aligned(UM_KERN_PAGE_SIZE);

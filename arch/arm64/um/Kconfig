@@ -1,0 +1,92 @@
+# SPDX-License-Identifier: GPL-2.0
+#
+# Copyright (C) 2026 - AArch64 support for User Mode Linux
+#
+
+menu "Host processor type and features"
+
+# ARM64 CPU features
+source "arch/arm64/Kconfig.platforms"
+
+endmenu
+
+config UML_ARM64
+	def_bool y
+	select ARCH_HAS_SYSCALL_WRAPPER
+	select ARCH_USE_QUEUED_RWLOCKS
+	select ARCH_USE_QUEUED_SPINLOCKS
+	select HAVE_EFFICIENT_UNALIGNED_ACCESS
+	select ARCH_HAS_GCOV_PROFILE_ALL
+	select ARCH_WANT_FRAME_POINTERS
+	select GENERIC_IRQ_SHOW
+	select GENERIC_CLOCKEVENTS
+	select HAVE_ARCH_AUDITSYSCALL
+	select HAVE_DEBUG_KMEMLEAK
+	select HAVE_DEBUG_BUGVERBOSE
+	select HAVE_PERF_EVENTS
+	select HAVE_ARCH_TRACEHOOK
+	select HAVE_DYNAMIC_FTRACE
+	select HAVE_FTRACE_MCOUNT_RECORD
+	select HAVE_FUNCTION_TRACER
+
+#
+# ARM64 is always 64-bit
+#
+config 64BIT
+	def_bool y
+
+#
+# ARM64 uses RELA relocations for modules
+#
+config MODULES_USE_ELF_RELA
+	def_bool y
+
+#
+# ARM64 only uses RT signals (no legacy signals)
+#
+config ARCH_HAS_SC_SIGNALS
+	def_bool n
+
+#
+# Generic hamming weight support
+#
+config GENERIC_HWEIGHT
+	def_bool y
+
+#
+# ARM64 specific page size
+# UML uses host page size, but ARM64 typically uses 4KB
+#
+config ARM64_PAGE_SHIFT
+	int
+	default 12
+
+#
+# VA_BITS for ARM64 UML
+# Use 39-bit virtual address space (512 GB) by default
+#
+config ARM64_VA_BITS
+	int
+	default 39
+
+#
+# Hardware capabilities detection
+#
+config ARM64_HW_AFDBM
+	bool "Support for hardware updates of the Access and Dirty page flags"
+	default y
+
+config ARM64_SVE
+	bool "Support for Scalable Vector Extension (SVE)"
+	default y
+	help
+	  The Scalable Vector Extension (SVE) is an extension to the ARM64
+	  AArch64 execution state which complements and extends the SIMD
+	  functionality of the ARM Advanced SIMD extension.
+
+config ARM64_PTR_AUTH
+	bool "Enable support for pointer authentication"
+	default y
+	help
+	  Pointer authentication is an ARM64 v8.3 extension which provides
+	  protection against certain classes of attacks.

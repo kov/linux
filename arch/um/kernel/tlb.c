@@ -73,7 +73,12 @@ static inline int update_pte_range(pmd_t *pmd, unsigned long addr,
 				r = 0;
 				w = 0;
 			} else if (!pte_dirty(*pte))
+#ifdef __aarch64__
+				/* Preserve write if the PTE says it's writable. */
+				w = w;
+#else
 				w = 0;
+#endif
 
 			prot = (r ? UM_PROT_READ : 0) |
 			       (w ? UM_PROT_WRITE : 0) |
@@ -81,8 +86,9 @@ static inline int update_pte_range(pmd_t *pmd, unsigned long addr,
 
 			ret = ops->mmap(ops->mm_idp, addr, PAGE_SIZE,
 					prot, fd, offset);
-		} else
+		} else {
 			ret = ops->unmap(ops->mm_idp, addr, PAGE_SIZE);
+		}
 
 		*pte = pte_mkuptodate(*pte);
 	} while (pte++, addr += PAGE_SIZE, ((addr < end) && !ret));
@@ -179,7 +185,6 @@ int um_tlb_sync(struct mm_struct *mm)
 		ops.unmap = unmap;
 	}
 
-	addr = mm->context.sync_tlb_range_from;
 	pgd = pgd_offset(mm, addr);
 	do {
 		next = pgd_addr_end(addr, mm->context.sync_tlb_range_to);

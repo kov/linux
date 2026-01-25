@@ -7,6 +7,7 @@
  */
 
 #include <stdlib.h>
+#include <stdio.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <errno.h>
@@ -44,6 +45,8 @@ static void sig_handler_common(int sig, struct siginfo *si, mcontext_t *mc)
 		get_regs_from_mc(&r, mc);
 		GET_FAULTINFO_FROM_MC(r.faultinfo, mc);
 	}
+
+
 
 	/* enable signals if sig isn't IRQ signal */
 	if ((sig != SIGIO) && (sig != SIGWINCH) && (sig != SIGCHLD))
