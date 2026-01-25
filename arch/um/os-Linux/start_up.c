@@ -18,7 +18,9 @@
 #include <sys/wait.h>
 #include <sys/time.h>
 #include <sys/resource.h>
+#ifdef __x86_64__
 #include <asm/ldt.h>
+#endif
 #include <asm/unistd.h>
 #include <init.h>
 #include <os.h>
@@ -166,8 +168,15 @@ static void __init check_sysemu(void)
 					  "doesn't singlestep");
 				goto fail;
 			}
+#if defined(PTRACE_PEEKUSER_SUPPORTED) && !PTRACE_PEEKUSER_SUPPORTED
+			/* ARM64: Use wrapper function */
+			n = ptrace_poke_user(pid, PT_SYSCALL_RET_OFFSET,
+					     os_getpid());
+#else
+			/* x86: Use native PTRACE_POKEUSER */
 			n = ptrace(PTRACE_POKEUSER, pid, PT_SYSCALL_RET_OFFSET,
 				   os_getpid());
+#endif
 			if (n < 0)
 				fatal_perror("check_sysemu : failed to modify "
 					     "system call return");
@@ -217,6 +226,19 @@ static void __init check_ptrace(void)
 			fatal("check_ptrace : expected (SIGTRAP|0x80), "
 			       "got status = %d", status);
 
+#if defined(PTRACE_PEEKUSER_SUPPORTED) && !PTRACE_PEEKUSER_SUPPORTED
+		/* ARM64: Use wrapper functions for PEEKUSER/POKEUSER */
+		syscall = ptrace_peek_user(pid, PT_SYSCALL_NR_OFFSET);
+		if (syscall == __NR_getpid) {
+			n = ptrace_poke_user(pid, PT_SYSCALL_NR_OFFSET,
+					     __NR_getppid);
+			if (n < 0)
+				fatal_perror("check_ptrace : failed to modify "
+					     "system call");
+			break;
+		}
+#else
+		/* x86: Use native PTRACE_PEEKUSER/POKEUSER */
 		syscall = ptrace(PTRACE_PEEKUSER, pid, PT_SYSCALL_NR_OFFSET,
 				 0);
 		if (syscall == __NR_getpid) {
@@ -227,6 +249,7 @@ static void __init check_ptrace(void)
 					     "system call");
 			break;
 		}
+#endif
 	}
 	stop_ptraced_child(pid, 0);
 	os_info("OK\n");

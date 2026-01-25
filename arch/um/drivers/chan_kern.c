@@ -324,6 +324,18 @@ int console_open_chan(struct line *line, struct console *co)
 
 	printk(KERN_INFO "Console initialized on /dev/%s%d\n", co->name,
 	       co->index);
+	{
+		static int console_open_log;
+		if (console_open_log < 4) {
+			console_open_log++;
+			printk(KERN_INFO
+			       "Console chan in=%s fd_in=%d out=%s fd_out=%d\n",
+			       line->chan_in ? line->chan_in->ops->type : "none",
+			       line->chan_in ? line->chan_in->fd_in : -1,
+			       line->chan_out ? line->chan_out->ops->type : "none",
+			       line->chan_out ? line->chan_out->fd_out : -1);
+		}
+	}
 	return 0;
 }
 

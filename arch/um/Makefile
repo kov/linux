@@ -134,7 +134,8 @@ LINK_WRAPS = -Wl,--wrap,malloc -Wl,--wrap,free -Wl,--wrap,calloc
 # ignorning warnings for the kallsyms sections.
 LDFLAGS_EXECSTACK = -z noexecstack
 ifeq ($(CONFIG_LD_IS_BFD),y)
-LDFLAGS_EXECSTACK += $(call ld-option,--no-warn-rwx-segments)
+# Temporarily disabled - mold linker doesn't support this flag
+# LDFLAGS_EXECSTACK += $(call ld-option,--no-warn-rwx-segments)
 endif
 
 LD_FLAGS_CMDLINE = $(foreach opt,$(KBUILD_LDFLAGS) $(LDFLAGS_EXECSTACK),-Wl,$(opt))

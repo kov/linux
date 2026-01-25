@@ -7,6 +7,7 @@
 
 #include <stdlib.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <unistd.h>
 #include <sched.h>
 #include <errno.h>
@@ -17,22 +18,46 @@
 #include <sys/wait.h>
 #include <sys/stat.h>
 #include <sys/socket.h>
+#include <sys/uio.h>
+#include <linux/elf.h>
+#include <linux/types.h>
+#ifndef __UM_HOST__
+#include <asm/current.h>
+#endif
+#include <linux/sched.h>
 #include <asm/unistd.h>
 #include <as-layout.h>
 #include <init.h>
 #include <kern_util.h>
+#include <longjmp.h>
 #include <mem.h>
 #include <os.h>
 #include <ptrace_user.h>
 #include <registers.h>
 #include <skas.h>
 #include <sysdep/stub.h>
+#include <stub-data.h>
 #include <sysdep/mcontext.h>
+#include <sysdep/faultinfo.h>
 #include <linux/futex.h>
 #include <linux/threads.h>
 #include <timetravel.h>
 #include <asm-generic/rwonce.h>
+#include <asm/ptrace.h>
+#include <linux/sched.h>
 #include "../internal.h"
+
+#ifdef __aarch64__
+int os_set_thread_area(void *tls, int pid);
+int os_get_thread_area(void *tls, int pid);
+static bool arm64_pac_valid;
+static struct user_pac_address_keys arm64_pac_keys;
+static struct user_pac_generic_keys arm64_pacg_keys;
+static struct user_pac_mask arm64_pac_mask;
+static unsigned long arm64_pac_enabled;
+static bool arm64_sig_is_store(struct mm_id *mm_id, unsigned long pc,
+			       unsigned int *insn_out);
+#endif
 
 int is_skas_winch(int pid, int fd, void *data)
 {
@@ -92,8 +117,15 @@ static int ptrace_dump_regs(int pid)
 	unsigned long regs[MAX_REG_NR];
 	int i;
 
+#ifdef __x86_64__
 	if (ptrace(PTRACE_GETREGS, pid, 0, regs) < 0)
 		return -errno;
+#else
+	/* ARM64 uses PTRACE_GETREGSET */
+	struct iovec iov = { .iov_base = regs, .iov_len = sizeof(regs) };
+	if (ptrace(PTRACE_GETREGSET, pid, NT_PRSTATUS, &iov) < 0)
+		return -errno;
+#endif
 
 	printk(UM_KERN_ERR "Stub registers -\n");
 	for (i = 0; i < ARRAY_SIZE(regs); i++) {
@@ -104,6 +136,8 @@ static int ptrace_dump_regs(int pid)
 
 	return 0;
 }
+
+
 
 /*
  * Signals that are OK to receive in the stub - we'll just continue it.
@@ -248,6 +282,78 @@ out_kill:
 
 extern unsigned long current_stub_stack(void);
 
+#ifdef __aarch64__
+static void fill_faultinfo_from_siginfo(struct faultinfo *fi, siginfo_t *si,
+					struct uml_pt_regs *regs)
+{
+	unsigned long addr;
+	unsigned long pc;
+
+	memset(fi, 0, sizeof(*fi));
+	if (!si)
+		return;
+
+	addr = (unsigned long)si->si_addr;
+	pc = regs ? regs->gp[32] : 0;
+
+	fi->cr2 = addr;
+	fi->error_code = 0;
+	/*
+	 * Heuristic: if the faulting address is the current PC, treat
+	 * it as an instruction abort, otherwise a data abort.
+	 */
+	if (pc && addr == pc)
+		fi->trap_no = ESR_ELx_EC_IABT_LOW;
+	else
+		fi->trap_no = ESR_ELx_EC_DABT_LOW;
+
+	if (fi->trap_no == ESR_ELx_EC_DABT_LOW &&
+	    (arm64_sig_is_store(current_mm_id(), pc, NULL) ||
+	     (si && si->si_code == SEGV_ACCERR)))
+		fi->error_code |= ESR_ELx_WNR;
+}
+
+static bool arm64_sig_is_store(struct mm_id *mm_id, unsigned long pc,
+			       unsigned int *insn_out)
+{
+	unsigned long aligned;
+	unsigned long word;
+	unsigned int insn;
+
+	if (!mm_id || pc == 0)
+		return false;
+
+	aligned = pc & ~0x7UL;
+	errno = 0;
+	word = ptrace(PTRACE_PEEKDATA, mm_id->pid, (void *)aligned, 0);
+	if (errno)
+		return false;
+
+	insn = (pc & 0x4) ? (unsigned int)(word >> 32) : (unsigned int)word;
+	if (insn_out)
+		*insn_out = insn;
+
+	/*
+	 * Heuristic decode for common A64 load/store encodings:
+	 * - Unsigned immediate: 0x39000000 class, L bit at 22.
+	 * - Unscaled/pre/post: 0x38000000 class, L bit at 22.
+	 * - Pair (LDP/STP): 0x29000000 class, L bit at 22.
+	 * - DC ZVA (cache line zero) is a write-like operation.
+	 */
+	if (((insn & 0x3b000000) == 0x39000000) ||
+	    ((insn & 0x3b000000) == 0x38000000) ||
+	    ((insn & 0x3b000000) == 0x29000000))
+		return !(insn & (1U << 22));
+
+	if ((insn & 0xffffffe0) == 0xd50b7420)
+		return true;
+
+	return false;
+}
+
+#endif
+
+#ifndef __aarch64__
 static void get_skas_faultinfo(int pid, struct faultinfo *fi)
 {
 	int err;
@@ -266,6 +372,7 @@ static void get_skas_faultinfo(int pid, struct faultinfo *fi)
 	 */
 	memcpy(fi, (void *)current_stub_stack(), sizeof(*fi));
 }
+#endif
 
 static void handle_trap(struct uml_pt_regs *regs)
 {
@@ -449,6 +556,7 @@ int start_userspace(struct mm_id *mm_id)
 	unsigned long sp;
 	int status, n, err;
 
+
 	/* setup a temporary stack page */
 	stack = mmap(NULL, UM_KERN_PAGE_SIZE,
 		     PROT_READ | PROT_WRITE | PROT_EXEC,
@@ -506,7 +614,7 @@ int start_userspace(struct mm_id *mm_id)
 		}
 
 		if (ptrace(PTRACE_SETOPTIONS, mm_id->pid, NULL,
-			   (void *) PTRACE_O_TRACESYSGOOD) < 0) {
+			   (void *)(PTRACE_O_TRACESYSGOOD | PTRACE_O_TRACEEXIT)) < 0) {
 			err = -errno;
 			printk(UM_KERN_ERR "%s : PTRACE_SETOPTIONS failed, errno = %d\n",
 			       __func__, errno);
@@ -550,12 +658,12 @@ void userspace(struct uml_pt_regs *regs)
 	siginfo_t *si;
 	int sig;
 
+
 	/* Handle any immediate reschedules or signals */
 	interrupt_end();
 
 	while (1) {
 		struct mm_id *mm_id = current_mm_id();
-
 		/*
 		 * At any given time, only one CPU thread can enter the
 		 * turnstile to operate on the same stub process, including
@@ -589,6 +697,7 @@ void userspace(struct uml_pt_regs *regs)
 		time_travel_print_bc_msg();
 
 		current_mm_sync();
+
 
 		if (using_seccomp) {
 			struct stub_data *proc_data = (void *) mm_id->stack;
@@ -638,7 +747,11 @@ void userspace(struct uml_pt_regs *regs)
 			regs->is_user = 1;
 
 			/* Fill in ORIG_RAX and extract fault information */
+#ifndef __aarch64__
 			PT_SYSCALL_NR(regs->gp) = si->si_syscall;
+#else
+			regs->syscall = si->si_syscall;
+#endif
 			if (sig == SIGSEGV) {
 				mcontext_t *mcontext = (void *)&proc_data->sigstack[proc_data->mctx_offset];
 
@@ -646,8 +759,10 @@ void userspace(struct uml_pt_regs *regs)
 			}
 		} else {
 			int pid = mm_id->pid;
+#ifndef __x86_64__
+			struct iovec iov = { .iov_base = regs->gp, .iov_len = MAX_REG_NR * sizeof(unsigned long) };
+#endif
 
-			/* Flush out any pending syscalls */
 			err = syscall_stub_flush(mm_id);
 			if (err) {
 				if (err == -ENOMEM)
@@ -658,15 +773,13 @@ void userspace(struct uml_pt_regs *regs)
 				fatal_sigsegv();
 			}
 
-			/*
-			 * This can legitimately fail if the process loads a
-			 * bogus value into a segment register.  It will
-			 * segfault and PTRACE_GETREGS will read that value
-			 * out of the process.  However, PTRACE_SETREGS will
-			 * fail.  In this case, there is nothing to do but
-			 * just kill the process.
-			 */
+#ifdef __x86_64__
 			if (ptrace(PTRACE_SETREGS, pid, 0, regs->gp)) {
+#else
+			iov.iov_base = regs->gp;
+			iov.iov_len = MAX_REG_NR * sizeof(unsigned long);
+			if (ptrace(PTRACE_SETREGSET, pid, NT_PRSTATUS, &iov)) {
+#endif
 				printk(UM_KERN_ERR "%s - ptrace set regs failed, errno = %d\n",
 				       __func__, errno);
 				fatal_sigsegv();
@@ -677,6 +790,41 @@ void userspace(struct uml_pt_regs *regs)
 				       __func__, errno);
 				fatal_sigsegv();
 			}
+
+#ifdef __aarch64__
+			/* Set TLS via ptrace */
+			{
+				unsigned long tls_val;
+				/* Hack removed: correct sync implemented below */
+				
+				tls_val = regs->tpidr_el0;
+				
+				struct stub_data *proc_data = (void *)mm_id->stack;
+				if (proc_data->arch_data.tpidr_el0 != tls_val) {
+					proc_data->arch_data.tpidr_el0 = tls_val;
+					proc_data->arch_data.sync |= STUB_SYNC_TPIDR_EL0;
+				}
+				
+				os_set_thread_area(&tls_val, pid);
+			}
+			
+			/* Set PAC Keys */
+			if (arm64_pac_valid) {
+				struct iovec iov;
+				iov.iov_base = &arm64_pac_keys;
+				iov.iov_len = sizeof(arm64_pac_keys);
+				ptrace(PTRACE_SETREGSET, pid, NT_ARM_PACA_KEYS, &iov);
+				iov.iov_base = &arm64_pacg_keys;
+				iov.iov_len = sizeof(arm64_pacg_keys);
+				ptrace(PTRACE_SETREGSET, pid, NT_ARM_PACG_KEYS, &iov);
+				iov.iov_base = &arm64_pac_mask;
+				iov.iov_len = sizeof(arm64_pac_mask);
+				ptrace(PTRACE_SETREGSET, pid, NT_ARM_PAC_MASK, &iov);
+				iov.iov_base = &arm64_pac_enabled;
+				iov.iov_len = sizeof(arm64_pac_enabled);
+				ptrace(PTRACE_SETREGSET, pid, NT_ARM_PAC_ENABLED_KEYS, &iov);
+			}
+#endif
 
 			if (singlestepping())
 				op = PTRACE_SYSEMU_SINGLESTEP;
@@ -697,7 +845,14 @@ void userspace(struct uml_pt_regs *regs)
 			}
 
 			regs->is_user = 1;
+
+#ifdef __x86_64__
 			if (ptrace(PTRACE_GETREGS, pid, 0, regs->gp)) {
+#else
+			iov.iov_base = regs->gp;
+			iov.iov_len = MAX_REG_NR * sizeof(unsigned long);
+			if (ptrace(PTRACE_GETREGSET, pid, NT_PRSTATUS, &iov)) {
+#endif
 				printk(UM_KERN_ERR "%s - PTRACE_GETREGS failed, errno = %d\n",
 				       __func__, errno);
 				fatal_sigsegv();
@@ -709,63 +864,88 @@ void userspace(struct uml_pt_regs *regs)
 				fatal_sigsegv();
 			}
 
+#ifdef __aarch64__
+			/* Sync TLS back from child to current thread struct */
+			{
+				unsigned long tls_val;
+				if (!os_get_thread_area(&tls_val, pid)) {
+					struct stub_data *proc_data = (void *)mm_id->stack;
+					
+					/* Update proc_data (persistent per loop) */
+					if (proc_data->arch_data.tpidr_el0 != tls_val) {
+						proc_data->arch_data.tpidr_el0 = tls_val;
+						proc_data->arch_data.sync |= STUB_SYNC_TPIDR_EL0;
+					}
+
+					regs->tpidr_el0 = tls_val;
+				}
+			}
+			{
+				struct iovec iov;
+				iov.iov_base = &arm64_pac_keys;
+				iov.iov_len = sizeof(arm64_pac_keys);
+				if (!ptrace(PTRACE_GETREGSET, pid, NT_ARM_PACA_KEYS, &iov))
+					arm64_pac_valid = true;
+				
+				iov.iov_base = &arm64_pacg_keys;
+				iov.iov_len = sizeof(arm64_pacg_keys);
+				if (!ptrace(PTRACE_GETREGSET, pid, NT_ARM_PACG_KEYS, &iov))
+					arm64_pac_valid = true;
+			}
+#endif
+
 			if (WIFSTOPPED(status)) {
 				sig = WSTOPSIG(status);
+			}
 
-				/*
-				 * These signal handlers need the si argument
-				 * and SIGSEGV needs the faultinfo.
-				 * The SIGIO and SIGALARM handlers which constitute
-				 * the majority of invocations, do not use it.
-				 */
-				switch (sig) {
-				case SIGSEGV:
-					get_skas_faultinfo(pid,
-							   &regs->faultinfo);
-					fallthrough;
-				case SIGTRAP:
-				case SIGILL:
-				case SIGBUS:
-				case SIGFPE:
-				case SIGWINCH:
-					ptrace(PTRACE_GETSIGINFO, pid, 0,
-					       (struct siginfo *)&si_local);
-					si = &si_local;
-					break;
-				default:
-					si = NULL;
-					break;
+			switch (sig) {
+			case SIGSEGV:
+				fallthrough;
+			case SIGTRAP:
+			case SIGILL:
+			case SIGBUS:
+			case SIGFPE:
+			case SIGWINCH:
+				memset(&si_local, 0, sizeof(si_local));
+				if (ptrace(PTRACE_GETSIGINFO, mm_id->pid, 0, (struct siginfo *)&si_local) < 0) {
+					printk(UM_KERN_ERR "ARM64: PTRACE_GETSIGINFO failed: %d\n", errno);
 				}
-			} else {
+				si = &si_local;
+				break;
+			}
+		}
+
+		if (WIFSTOPPED(status)) {
+			switch (sig) {
+			case SIGTRAP:
+				handle_syscall(regs);
 				sig = 0;
+				break;
 			}
 		}
 
 		exit_turnstile(mm_id);
 
-		UPT_SYSCALL_NR(regs) = -1; /* Assume: It's not a syscall */
+#ifndef __aarch64__
+		UPT_SYSCALL_NR(regs) = -1;
+#else
+		regs->syscall = -1;
+#endif
 
 		if (sig) {
 			switch (sig) {
 			case SIGSEGV:
+				/* PTRACE_FULL_FAULTINFO handling removed - get_faultinfo not available */
+				/* Use siginfo to populate faultinfo */
+				fill_faultinfo_from_siginfo(&regs->faultinfo, si, regs);
+				
+				
+				fallthrough;
+			case SIGTRAP:
 				if (using_seccomp || PTRACE_FULL_FAULTINFO)
-					(*sig_info[SIGSEGV])(SIGSEGV,
-							     (struct siginfo *)si,
-							     regs, NULL);
+					(*sig_info[SIGSEGV])(SIGSEGV, (struct siginfo *)si, regs, NULL);
 				else
 					segv(regs->faultinfo, 0, 1, NULL, NULL);
-
-				break;
-			case SIGSYS:
-				handle_syscall(regs);
-				break;
-			case SIGTRAP + 0x80:
-				handle_trap(regs);
-				break;
-			case SIGTRAP:
-				relay_signal(SIGTRAP, (struct siginfo *)si, regs, NULL);
-				break;
-			case SIGALRM:
 				break;
 			case SIGIO:
 			case SIGILL:
@@ -776,25 +956,34 @@ void userspace(struct uml_pt_regs *regs)
 				(*sig_info[sig])(sig, (struct siginfo *)si, regs, NULL);
 				unblock_signals_trace();
 				break;
+			case SIGALRM:
+				break;
+			case SIGTRAP + 0x80:
+				regs->syscall = regs->gp[8];
+				handle_trap(regs);
+				break;
+			case SIGSYS:
+				handle_syscall(regs);
+				break;
 			default:
 				printk(UM_KERN_ERR "%s - child stopped with signal %d\n",
 				       __func__, sig);
 				fatal_sigsegv();
 			}
-			interrupt_end();
-
-			/* Avoid -ERESTARTSYS handling in host */
-			if (PT_SYSCALL_NR_OFFSET != PT_SYSCALL_RET_OFFSET)
-				PT_SYSCALL_NR(regs->gp) = -1;
 		}
+		interrupt_end();
 	}
 }
-
 void new_thread(void *stack, jmp_buf *buf, void (*handler)(void))
 {
 	(*buf)[0].JB_IP = (unsigned long) handler;
+#ifdef __aarch64__
+	/* ARM64 requires 16-byte stack alignment */
+	(*buf)[0].JB_SP = ((unsigned long) stack + UM_THREAD_SIZE - 16) & ~15UL;
+#else
 	(*buf)[0].JB_SP = (unsigned long) stack + UM_THREAD_SIZE -
 		sizeof(void *);
+#endif
 }
 
 #define INIT_JMP_NEW_THREAD 0
@@ -833,9 +1022,19 @@ int start_idle_thread(void *stack, jmp_buf *switch_buf)
 	n = setjmp(initial_jmpbuf);
 	switch (n) {
 	case INIT_JMP_NEW_THREAD:
+#ifdef __aarch64__
+		/* ARM64: Initialize all callee-saved registers to avoid undefined values */
+		memset(*switch_buf, 0, sizeof(**switch_buf));
+		(*switch_buf)[0].JB_IP = (unsigned long) uml_finishsetup;
+		/* ARM64 requires 16-byte stack alignment */
+		(*switch_buf)[0].JB_SP = ((unsigned long) stack +
+			UM_THREAD_SIZE - 16) & ~15UL;
+		(*switch_buf)[0].JB_FP = 0;
+#else
 		(*switch_buf)[0].JB_IP = (unsigned long) uml_finishsetup;
 		(*switch_buf)[0].JB_SP = (unsigned long) stack +
 			UM_THREAD_SIZE - sizeof(void *);
+#endif
 		break;
 	case INIT_JMP_CALLBACK:
 		(*cb_proc)(cb_arg);

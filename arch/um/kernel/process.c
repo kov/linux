@@ -162,6 +162,8 @@ int copy_thread(struct task_struct * p, const struct kernel_clone_args *args)
 
 		handler = fork_handler;
 
+
+
 		arch_copy_thread(&current->thread.arch, &p->thread.arch);
 	} else {
 		get_safe_registers(p->thread.regs.regs.gp, p->thread.regs.regs.fp);

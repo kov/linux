@@ -1,3 +1,4 @@
+#include <stddef.h>
 #include <sys/ptrace.h>
 #include <sys/prctl.h>
 #include <sys/fcntl.h>
@@ -7,6 +8,10 @@
 #include <linux/filter.h>
 #include <linux/seccomp.h>
 #include <generated/asm-offsets.h>
+
+#ifndef SA_RESTORER
+#define SA_RESTORER 0x04000000
+#endif
 
 void _start(void);
 
@@ -21,6 +26,16 @@ noinline static void real_init(void)
 	} stack = {
 		.ss_size = STUB_DATA_PAGES * UM_KERN_PAGE_SIZE,
 	};
+#ifdef __aarch64__
+	/* ARM64: Kernel sigaction uses sa_restorer and an 8-byte sigset_t. */
+	struct {
+		void *sa_handler_;          // offset 0, 8 bytes
+		unsigned long sa_flags;     // offset 8, 8 bytes
+		void *sa_restorer;          // offset 16, 8 bytes
+		unsigned long sa_mask;      // offset 24, 8 bytes
+	} sa = { 0 };
+#else
+	/* x86_64 sigaction structure layout */
 	struct {
 		void *sa_handler_;
 		unsigned long sa_flags;
@@ -30,6 +45,7 @@ noinline static void real_init(void)
 		/* Need to set SA_RESTORER (but the handler never returns) */
 		.sa_flags = SA_ONSTACK | SA_NODEFER | SA_SIGINFO | 0x04000000,
 	};
+#endif
 
 	/* set a nice name */
 	stub_syscall2(__NR_prctl, PR_SET_NAME, (unsigned long)"uml-userspace");
@@ -68,6 +84,18 @@ noinline static void real_init(void)
 	if (res != init_data.stub_start + UM_KERN_PAGE_SIZE)
 		stub_syscall1(__NR_exit, 12);
 
+	/* Use the dedicated sigstack page to avoid clobbering stub_data fields. */
+	{
+		struct stub_data *d = (void *)(init_data.stub_start + UM_KERN_PAGE_SIZE);
+
+		stack.ss_sp = d->sigstack;
+#ifdef __aarch64__
+		stack.ss_size = UML_SIGSTKSZ;
+#else
+		stack.ss_size = UM_KERN_PAGE_SIZE;
+#endif
+	}
+
 	/* In SECCOMP mode, we only need the signalling FD from now on */
 	if (init_data.seccomp) {
 		res = stub_syscall3(__NR_close_range, 1, ~0U, 0);
@@ -76,12 +104,18 @@ noinline static void real_init(void)
 	}
 
 	/* setup signal stack inside stub data */
-	stack.ss_sp = (void *)init_data.stub_start + UM_KERN_PAGE_SIZE;
 	stub_syscall2(__NR_sigaltstack, (unsigned long)&stack, 0);
 
 	/* register signal handlers */
 	sa.sa_handler_ = (void *) init_data.signal_handler;
+	/* Set signal restorer and flags */
 	sa.sa_restorer = (void *) init_data.signal_restorer;
+#ifdef __aarch64__
+	sa.sa_flags = SA_ONSTACK | SA_NODEFER | SA_SIGINFO;
+	if (init_data.signal_restorer)
+		sa.sa_flags |= SA_RESTORER;
+#endif
+
 	if (!init_data.seccomp) {
 		/* In ptrace mode, the SIGSEGV handler never returns */
 		sa.sa_mask = 0;
@@ -179,9 +213,12 @@ noinline static void real_init(void)
 #ifdef __i386__
 			BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_set_thread_area,
 				 2, 0),
-#else
+#elif defined(__x86_64__)
 			BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_arch_prctl,
 				 2, 0),
+#else
+			/* ARM64: TLS is set via ptrace (TPIDR_EL0), no special syscall needed */
+			BPF_STMT(BPF_LD | BPF_W | BPF_ABS, 0), /* NOP - just reload to keep offset */
 #endif
 			BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_rt_sigreturn,
 				 1, 0),

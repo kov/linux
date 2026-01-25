@@ -22,12 +22,18 @@ void generic_close(int fd, void *unused)
 int generic_read(int fd, __u8 *c_out, void *unused)
 {
 	int n;
+	static int eof_log;
 
 	CATCH_EINTR(n = read(fd, c_out, sizeof(*c_out)));
 	if (n > 0)
 		return n;
-	else if (n == 0)
+	else if (n == 0) {
+		if (eof_log < 4) {
+			eof_log++;
+			printk(UM_KERN_INFO "generic_read EOF fd=%d\n", fd);
+		}
 		return -EIO;
+	}
 	else if (errno == EAGAIN)
 		return 0;
 	return -errno;
