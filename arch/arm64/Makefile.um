@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: GPL-2.0
+#
+# Copyright (C) 2026 - AArch64 support for User Mode Linux
+# Based on arch/x86/Makefile.um
+#
+
+#
+# Include ARM64 crypto if enabled
+#
+core-y += arch/arm64/crypto/
+
+#
+# ARM64 start address for UML process
+# Use a high address to avoid conflicts with host libraries
+#
+START := 0x60000000
+
+#
+# ARM64-specific compiler flags
+#
+KBUILD_CFLAGS += -fno-builtin
+
+#
+# ELF architecture settings for ARM64
+#
+ELF_ARCH := aarch64
+ELF_FORMAT := elf64-littleaarch64
+
+#
+# Checkflags for sparse
+#
+CHECKFLAGS += -D__aarch64__
+
+#
+# Rust target configuration
+#
+KBUILD_RUSTFLAGS += --target=aarch64-unknown-linux-gnu
+
+#
+# Dynamic linker path for ARM64
+# Most ARM64 distributions use /lib/ld-linux-aarch64.so.1
+#
+LINK-$(CONFIG_LD_SCRIPT_DYN_RPATH) += -Wl,-rpath,/lib
+
+#
+# ARM64 kernel code model
+# Use small code model for kernel (default)
+# Already set in main Makefile if CONFIG_64BIT
+#

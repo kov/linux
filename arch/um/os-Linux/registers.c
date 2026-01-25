@@ -7,6 +7,8 @@
 #include <errno.h>
 #include <string.h>
 #include <sys/ptrace.h>
+#include <sys/uio.h>
+#include <linux/elf.h>
 #include <sysdep/ptrace.h>
 #include <sysdep/ptrace_user.h>
 #include <registers.h>
@@ -21,7 +23,13 @@ int init_pid_registers(int pid)
 {
 	int err;
 
+#ifdef __x86_64__
 	err = ptrace(PTRACE_GETREGS, pid, 0, exec_regs);
+#else
+	/* ARM64 and other architectures use PTRACE_GETREGSET */
+	struct iovec iov = { .iov_base = exec_regs, .iov_len = MAX_REG_NR * sizeof(unsigned long) };
+	err = ptrace(PTRACE_GETREGSET, pid, NT_PRSTATUS, &iov);
+#endif
 	if (err < 0)
 		return -errno;
 
