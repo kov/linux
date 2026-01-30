@@ -9,6 +9,7 @@
 #include <linux/sys.h>
 #include <linux/cache.h>
 #include <asm/syscall.h>
+#include <asm/unistd.h>
 
 extern asmlinkage long __arm64_sys_ni_syscall(const struct pt_regs *regs);
 

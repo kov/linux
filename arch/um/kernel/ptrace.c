@@ -41,7 +41,7 @@ void ptrace_disable(struct task_struct *child)
 long arch_ptrace(struct task_struct *child, long request,
 		 unsigned long addr, unsigned long data)
 {
-	int i, ret;
+	int ret;
 	unsigned long __user *p = (void __user *)data;
 	void __user *vp = p;
 
@@ -63,6 +63,7 @@ long arch_ptrace(struct task_struct *child, long request,
 
 #ifdef PTRACE_GETREGS
 	case PTRACE_GETREGS: { /* Get all gp regs from the child. */
+		int i;
 		if (!access_ok(p, MAX_REG_OFFSET)) {
 			ret = -EIO;
 			break;
@@ -77,6 +78,7 @@ long arch_ptrace(struct task_struct *child, long request,
 #endif
 #ifdef PTRACE_SETREGS
 	case PTRACE_SETREGS: { /* Set all gp regs in the child. */
+		int i;
 		unsigned long tmp = 0;
 		if (!access_ok(p, MAX_REG_OFFSET)) {
 			ret = -EIO;

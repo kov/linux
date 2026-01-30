@@ -251,7 +251,11 @@ noinline static void real_init(void)
 	__builtin_unreachable();
 }
 
+#if defined(__aarch64__)
+void _start(void)
+#else
 __attribute__((naked)) void _start(void)
+#endif
 {
 	/*
 	 * Since the stack after exec() starts at the top-most address,

@@ -6,6 +6,8 @@
 
 #include <errno.h>
 #include <stdlib.h>
+#include <string.h>
+#include <signal.h>
 #include <sys/ptrace.h>
 #ifdef __i386__
 #include <sys/user.h>
@@ -13,10 +15,16 @@
 #include <longjmp.h>
 #include <sysdep/ptrace_user.h>
 #include <sys/uio.h>
-#include <asm/sigcontext.h>
 #include <linux/elf.h>
+#include <kern_util.h>
 #include <registers.h>
+#include <stub-data.h>
 #include <sys/mman.h>
+#include <skas.h>
+#include <os.h>
+
+/* From arch/um/os-Linux/internal.h */
+void wait_stub_done(int pid);
 
 static unsigned long ptrace_regset;
 unsigned long host_fp_size;
@@ -106,4 +114,103 @@ unsigned long get_thread_reg(int reg, jmp_buf *buf)
 		       reg);
 		return 0;
 	}
+}
+
+static const char *ptrace_reg_name(int idx)
+{
+#define R(n)           \
+	case HOST_##n: \
+		return #n
+
+	switch (idx) {
+#ifdef __x86_64__
+		R(BX);
+		R(CX);
+		R(DI);
+		R(SI);
+		R(DX);
+		R(BP);
+		R(AX);
+		R(R8);
+		R(R9);
+		R(R10);
+		R(R11);
+		R(R12);
+		R(R13);
+		R(R14);
+		R(R15);
+		R(ORIG_AX);
+		R(CS);
+		R(SS);
+		R(EFLAGS);
+#elif defined(__i386__)
+		R(IP);
+		R(SP);
+		R(EFLAGS);
+		R(AX);
+		R(BX);
+		R(CX);
+		R(DX);
+		R(SI);
+		R(DI);
+		R(BP);
+		R(CS);
+		R(SS);
+		R(DS);
+		R(FS);
+		R(ES);
+		R(GS);
+		R(ORIG_AX);
+#endif
+	}
+	return "";
+}
+
+int os_dump_regs(int pid)
+{
+	unsigned long regs[MAX_REG_NR];
+	int i;
+
+	if (ptrace(PTRACE_GETREGS, pid, 0, regs) < 0)
+		return -errno;
+
+	printk(UM_KERN_ERR "Stub registers -\n");
+	for (i = 0; i < ARRAY_SIZE(regs); i++) {
+		const char *regname = ptrace_reg_name(i);
+
+		printk(UM_KERN_ERR "\t%s\t(%2d): %lx\n", regname, i, regs[i]);
+	}
+
+	return 0;
+}
+
+void os_get_faultinfo(int pid, struct faultinfo *fi, void *si,
+		      struct uml_pt_regs *regs)
+{
+	int err;
+
+	err = ptrace(PTRACE_CONT, pid, 0, SIGSEGV);
+	if (err) {
+		printk(UM_KERN_ERR "Failed to continue stub, pid = %d, "
+				   "errno = %d\n",
+		       pid, errno);
+		fatal_sigsegv();
+	}
+	wait_stub_done(pid);
+
+	/*
+	 * faultinfo is prepared by the stub_segv_handler at start of
+	 * the stub stack page. We just have to copy it.
+	 */
+	memcpy(fi, (void *)current_stub_stack(), sizeof(*fi));
+}
+
+void os_arch_process_handshake(int pid, struct uml_pt_regs *regs,
+			       struct stub_data *proc_data)
+{
+	/* No special architectural handshake needed for x86 */
+}
+
+void os_arch_post_wait_handshake(int pid, struct uml_pt_regs *regs)
+{
 }

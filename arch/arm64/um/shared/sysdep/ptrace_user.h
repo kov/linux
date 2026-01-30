@@ -44,6 +44,9 @@
 long ptrace_peek_user(int pid, long offset);
 long ptrace_poke_user(int pid, long offset, long value);
 
+#define os_ptrace_peek_user(pid, addr) ptrace_peek_user(pid, addr)
+#define os_ptrace_poke_user(pid, addr, data) ptrace_poke_user(pid, addr, data)
+
 #define PTRACE_PEEKUSER_SUPPORTED 0
 
 #endif /* __SYSDEP_ARM64_PTRACE_USER_H */
