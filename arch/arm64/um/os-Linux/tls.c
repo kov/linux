@@ -9,6 +9,7 @@
 #include <sys/uio.h>
 #include <linux/elf.h>
 #include <stdio.h>
+#include <sysdep/ptrace.h>
 
 /*
  * ARM64 TLS operations via ptrace

@@ -234,6 +234,7 @@ struct uml_pt_regs {
 	long syscall;                   /* Current syscall number */
 	int is_user;                    /* Running in user mode? */
 	unsigned long tpidr_el0;        /* ARM64 TLS Register */
+	unsigned long _pad; /* Align fp to 16 bytes for SIMD access */
 
 	/* Dynamically sized FP registers (FPSIMD/SVE state) */
 	unsigned long fp[];
@@ -256,5 +257,16 @@ struct uml_pt_regs {
  * Architecture initialization
  */
 extern int arch_init_registers(int pid);
+
+#ifdef __KERNEL__
+struct pt_regs;
+extern int arch_do_signal_or_restart(struct pt_regs *regs, int has_signal);
+extern long __arm64_sys_ni_syscall(const struct pt_regs *regs);
+#endif
+
+/* TLS handling */
+extern int os_set_thread_area(void *tls, int pid);
+extern int os_get_thread_area(void *tls, int pid);
+extern void check_host_supports_tls(int *supports_tls, int *tls_min);
 
 #endif /* __SYSDEP_ARM64_PTRACE_H */

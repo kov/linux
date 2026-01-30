@@ -31,8 +31,6 @@ void flush_thread(void)
 
 void start_thread(struct pt_regs *regs, unsigned long eip, unsigned long esp)
 {
-	static int start_thread_dbg;
-
 	PT_REGS_IP(regs) = eip;
 	PT_REGS_SP(regs) = esp;
 #ifdef __aarch64__
