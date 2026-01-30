@@ -51,9 +51,11 @@ extern char *elf_aux_platform;
  * Initialize registers for new ELF process
  * UML pt_regs has gp[] array, not direct register fields
  */
-#define ELF_PLAT_INIT(_r, load_addr) \
-	do { \
-		(_r)->regs.gp[0] = 0; \
+#define ELF_PLAT_INIT(_r, load_addr)             \
+	do {                                     \
+		int i;                           \
+		for (i = 0; i < MAX_REG_NR; i++) \
+			(_r)->regs.gp[i] = 0;    \
 	} while (0)
 
 #define USE_ELF_CORE_DUMP

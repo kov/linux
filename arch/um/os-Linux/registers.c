@@ -37,7 +37,7 @@ int init_pid_registers(int pid)
 	if (err < 0)
 		return err;
 
-	exec_fp_regs = malloc(host_fp_size);
+	exec_fp_regs = calloc(1, host_fp_size);
 	get_fp_registers(pid, exec_fp_regs);
 	return 0;
 }

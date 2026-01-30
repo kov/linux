@@ -10,6 +10,9 @@
 #include <asm/page.h>
 #include <asm/elf.h>
 #include <linux/init.h>
+#include <linux/binfmts.h>
+
+extern int arch_setup_additional_pages(struct linux_binprm *bprm, int uses_interp);
 
 unsigned long um_vdso_addr;
 static struct page *um_vdso;

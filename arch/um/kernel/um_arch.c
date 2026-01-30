@@ -269,6 +269,18 @@ EXPORT_SYMBOL(task_size);
 
 unsigned long brk_start;
 
+/* Prototypes for stubs to satisfy generic kernel requirements */
+struct alt_instr;
+void apply_seal_endbr(s32 *start, s32 *end);
+void apply_retpolines(s32 *start, s32 *end);
+void apply_returns(s32 *start, s32 *end);
+void apply_fineibt(s32 *start_retpoline, s32 *end_retpoline,
+		   s32 *start_cfi, s32 *end_cfi);
+void apply_alternatives(struct alt_instr *start, struct alt_instr *end);
+void *text_poke(void *addr, const void *opcode, size_t len);
+void *text_poke_copy(void *addr, const void *opcode, size_t len);
+void smp_text_poke_sync_each_cpu(void);
+
 #define MIN_VMALLOC (32 * 1024 * 1024)
 
 static void __init parse_host_cpu_flags(char *line)

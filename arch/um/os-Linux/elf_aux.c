@@ -36,6 +36,11 @@ __init void scan_elf_aux( char **envp)
 		switch ( auxv->a_type ) {
 			case AT_HWCAP:
 				elf_aux_hwcap = auxv->a_un.a_val;
+#ifdef __aarch64__
+				/* Mask SVE (bit 22) and PAC (bits 30, 31) */
+				elf_aux_hwcap &= ~((1UL << 22) | (1UL << 30) |
+						   (1UL << 31));
+#endif
 				break;
 			case AT_PLATFORM:
                                 /* elf.h removed the pointer elements from

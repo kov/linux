@@ -18,3 +18,7 @@
 #ifndef PTRACE_SYSEMU_SINGLESTEP
 #define PTRACE_SYSEMU_SINGLESTEP 32
 #endif
+
+#define os_ptrace_peek_user(pid, addr) ptrace(PTRACE_PEEKUSER, pid, addr, 0)
+#define os_ptrace_poke_user(pid, addr, data) \
+	ptrace(PTRACE_POKEUSER, pid, addr, data)

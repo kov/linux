@@ -11,11 +11,19 @@
 #include <linux/uaccess.h>
 #include <linux/regset.h>
 #include <asm/unistd.h>
+#include <asm/user.h>
 #include <asm/ucontext.h>
 #include <asm/sigframe.h>
 #include <frame_kern.h>
 #include <registers.h>
 #include <skas.h>
+
+/* Prototypes for functions defined in this file to satisfy -Wmissing-prototypes */
+int setup_signal_stack(unsigned long stack_top, struct ksignal *ksig,
+		       struct pt_regs *regs, sigset_t *set);
+int setup_signal_stack_si(unsigned long stack_top, struct ksignal *ksig,
+			  struct pt_regs *regs, sigset_t *set);
+long sys_sigreturn(void);
 
 /*
  * ARM64 signal frame structures
@@ -45,70 +53,136 @@
 static int copy_sc_from_user(struct pt_regs *regs,
 			     struct sigcontext __user *from)
 {
-	struct sigcontext sc;
 	struct fpsimd_context __user *fpsimd_user;
+	struct _aarch64_ctx head;
 	int err, i;
 
 	/* Always make any pending restarted system calls return -EINTR */
 	current->restart_block.fn = do_no_restart_syscall;
 
-	err = copy_from_user(&sc, from, sizeof(sc));
+	/* Copy general purpose registers x0-x30 */
+	for (i = 0; i < 31; i++) {
+		err = __get_user(regs->regs.gp[i], &from->regs[i]);
+		if (err)
+			return err;
+	}
+
+	/* Copy special registers */
+	err = __get_user(regs->regs.gp[HOST_SP], &from->sp);
+	err |= __get_user(regs->regs.gp[HOST_PC], &from->pc);
+	err |= __get_user(regs->regs.gp[HOST_PSTATE], &from->pstate);
 	if (err)
 		return err;
 
-	/* Copy general purpose registers x0-x30 */
-	for (i = 0; i < 31; i++)
-		regs->regs.gp[i] = sc.regs[i];
-
-	/* Copy special registers */
-	regs->regs.gp[HOST_SP] = sc.sp;
-	regs->regs.gp[HOST_PC] = sc.pc;
-	regs->regs.gp[HOST_PSTATE] = sc.pstate;
-
-	/* Copy FP/SIMD state from __reserved area */
+	/*
+	 * Copy FP/SIMD state from __reserved area
+	 * We look for FPSIMD_MAGIC. If not found, we don't restore FP.
+	 * This is a simplified parser - it expects FPSIMD at the start.
+	 */
 	fpsimd_user = (void __user *)&from->__reserved;
-	err = copy_from_user(regs->regs.fp, fpsimd_user, host_fp_size);
+	err = copy_from_user(&head, &fpsimd_user->head, sizeof(head));
 	if (err)
 		return 1;
 
+	if (head.magic == FPSIMD_MAGIC &&
+	    head.size == sizeof(struct fpsimd_context)) {
+		struct user_fpsimd_state *kfp =
+			(struct user_fpsimd_state *)regs->regs.fp;
+
+		err = __get_user(kfp->fpsr, &fpsimd_user->fpsr);
+		err |= __get_user(kfp->fpcr, &fpsimd_user->fpcr);
+		err |= copy_from_user(kfp->vregs, fpsimd_user->vregs,
+				      sizeof(kfp->vregs));
+
+		if (err)
+			return 1;
+	}
+
 	return 0;
 }
+
+#ifndef ESR_MAGIC
+#define ESR_MAGIC 0x45535201
+#endif
 
 /*
  * Copy kernel pt_regs to user sigcontext
  * Used when delivering a signal
  */
-static int copy_sc_to_user(struct sigcontext __user *to,
-			   struct pt_regs *regs,
-			   unsigned long mask)
+static int copy_sc_to_user(struct sigcontext __user *to, struct pt_regs *regs,
+			   unsigned long mask, int sig)
 {
-	struct sigcontext sc;
 	struct fpsimd_context __user *fpsimd_user;
+	struct _aarch64_ctx terminator = { 0, 0 };
 	struct faultinfo *fi = &current->thread.arch.faultinfo;
+	struct user_fpsimd_state *kfp =
+		(struct user_fpsimd_state *)regs->regs.fp;
 	int err, i;
 
-	memset(&sc, 0, sizeof(struct sigcontext));
+	/*
+	 * We don't copy the whole sigcontext to stack because it is >4KB.
+	 * Instead, we write fields individually and clear the reserved area.
+	 */
 
 	/* Copy general purpose registers x0-x30 */
-	for (i = 0; i < 31; i++)
-		sc.regs[i] = regs->regs.gp[i];
+	for (i = 0; i < 31; i++) {
+		err = __put_user(regs->regs.gp[i], &to->regs[i]);
+		if (err)
+			return err;
+	}
 
 	/* Copy special registers */
-	sc.sp = regs->regs.gp[HOST_SP];
-	sc.pc = regs->regs.gp[HOST_PC];
-	sc.pstate = regs->regs.gp[HOST_PSTATE];
+	err = __put_user(regs->regs.gp[HOST_SP], &to->sp);
+	err |= __put_user(regs->regs.gp[HOST_PC], &to->pc);
+	err |= __put_user(regs->regs.gp[HOST_PSTATE], &to->pstate);
 
 	/* Store fault information */
-	sc.fault_address = fi->cr2;  /* FAR_EL1 */
+	err |= __put_user(fi->cr2, &to->fault_address);  /* FAR_EL1 */
 
-	/* Copy sigcontext to user */
-	err = copy_to_user(to, &sc, sizeof(sc));
 	if (err)
 		return 1;
 
-	/* Copy FP/SIMD state to __reserved area */
+	/*
+	 * Copy FP/SIMD state to __reserved area
+	 * We must create a valid fpsimd_context with magic and size
+	 */
 	fpsimd_user = (void __user *)&to->__reserved;
-	err = copy_to_user(fpsimd_user, regs->regs.fp, host_fp_size);
+
+	/* Write Magic and Size */
+	err = __put_user(FPSIMD_MAGIC, &fpsimd_user->head.magic);
+	err |= __put_user(sizeof(struct fpsimd_context),
+			  &fpsimd_user->head.size);
+
+	/* Copy Registers: Map user_fpsimd_state to fpsimd_context layout */
+	err |= __put_user(kfp->fpsr, &fpsimd_user->fpsr);
+	err |= __put_user(kfp->fpcr, &fpsimd_user->fpcr);
+	err |= copy_to_user(fpsimd_user->vregs, kfp->vregs, sizeof(kfp->vregs));
+
+	/*
+	 * Append ESR context for synchronous signals
+	 * This is critical for glibc to handle SIGILL probes correctly
+	 */
+	if (sig == SIGILL || sig == SIGSEGV || sig == SIGBUS ||
+	    sig == SIGTRAP) {
+		struct esr_context esr_ctx;
+		void __user *next = (void __user *)(fpsimd_user + 1);
+
+		esr_ctx.head.magic = ESR_MAGIC;
+		esr_ctx.head.size = sizeof(struct esr_context);
+		esr_ctx.esr = ((unsigned long)fi->trap_no << 26) |
+			      fi->error_code;
+
+		err |= copy_to_user(next, &esr_ctx, sizeof(esr_ctx));
+		next += sizeof(struct esr_context);
+
+		/* Write Terminator */
+		err |= copy_to_user(next, &terminator, sizeof(terminator));
+	} else {
+		/* Write Terminator immediately after FPSIMD */
+		err |= copy_to_user((void __user *)(fpsimd_user + 1),
+				    &terminator, sizeof(terminator));
+	}
+
 	if (err)
 		return 1;
 
@@ -165,7 +239,8 @@ int setup_signal_stack_si(unsigned long stack_top, struct ksignal *ksig,
 	err |= __save_altstack(&frame->uc.uc_stack, PT_REGS_SP(regs));
 
 	/* Copy register state to signal frame */
-	err |= copy_sc_to_user(&frame->uc.uc_mcontext, regs, set->sig[0]);
+	err |= copy_sc_to_user(&frame->uc.uc_mcontext, regs, set->sig[0],
+			       ksig->sig);
 
 	/* Set signal mask */
 	err |= __copy_to_user(&frame->uc.uc_sigmask, set, sizeof(*set));
@@ -274,7 +349,7 @@ long sys_sigreturn(void)
  * Determine if we're in a syscall
  * Used to decide if we need to restart syscalls
  */
-int arch_do_signal_or_restart(struct pt_regs *regs, bool has_signal)
+int arch_do_signal_or_restart(struct pt_regs *regs, int has_signal)
 {
 	/* ARM64-specific signal restart logic if needed */
 	return 0;

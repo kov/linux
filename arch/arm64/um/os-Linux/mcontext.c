@@ -12,6 +12,8 @@
 #include <sysdep/ptrace.h>
 #include <sysdep/faultinfo.h>
 #include <stub-data.h>
+#include <sysdep/mcontext.h>
+
 
 /*
  * Copy registers from host signal context to UML pt_regs

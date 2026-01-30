@@ -7,6 +7,7 @@
 #include <linux/export.h>
 #include <linux/string.h>
 #include <asm/checksum.h>
+#include <asm/delay.h>
 
 /*
  * Delay functions
