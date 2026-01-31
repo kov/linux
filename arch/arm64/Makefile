@@ -192,6 +192,9 @@ install: KBUILD_IMAGE := $(DEFAULT_KBUILD_IMAGE)
 install zinstall:
 	$(call cmd,install)
 
+archheaders:
+	$(Q)$(MAKE) $(build)=arch/arm64/tools kapi
+
 archprepare:
 	$(Q)$(MAKE) $(build)=arch/arm64/tools kapi
 
