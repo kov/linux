@@ -65,6 +65,14 @@ include/generated/user_constants.h: $(obj)/user-offsets.s FORCE
 	$(call filechk,offsets,__USER_CONSTANT_H__)
 
 #
+# BPF JIT - reuse ARM64's JIT compiler
+# Force-include compat header to stub out hardware-specific features
+#
+CFLAGS_bpf_jit_comp.o := -include $(srctree)/arch/arm64/um/bpf_jit_compat.h
+obj-$(CONFIG_BPF_JIT) += bpf_jit_comp.o ../net/bpf_timed_may_goto.o insn.o \
+	bpf_jit_patching.o
+
+#
 # Include common UML build rules
 #
 include $(srctree)/arch/um/scripts/Makefile.rules

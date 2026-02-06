@@ -1093,6 +1093,17 @@ static void build_epilogue(struct jit_ctx *ctx, bool was_classic)
 #define BPF_FIXUP_REG_MASK	GENMASK(31, 27)
 #define DONT_CLEAR 5 /* Unused ARM64 register from BPF's POV */
 
+#ifdef CONFIG_UML
+/*
+ * UML uses a different pt_regs and exception_table_entry layout.
+ * This handler is never called on UML (faults go through SIGSEGV).
+ */
+bool ex_handler_bpf(const struct exception_table_entry *ex,
+		    struct pt_regs *regs)
+{
+	return false;
+}
+#else
 bool ex_handler_bpf(const struct exception_table_entry *ex,
 		    struct pt_regs *regs)
 {
@@ -1115,8 +1126,21 @@ bool ex_handler_bpf(const struct exception_table_entry *ex,
 
 	return true;
 }
+#endif
 
 /* For accesses to BTF pointers, add an entry to the exception table */
+#ifdef CONFIG_UML
+/*
+ * UML uses generic exception_table_entry without type/data fields.
+ * Exception-based fault recovery is not used on UML.
+ */
+static int add_exception_handler(const struct bpf_insn *insn,
+				 struct jit_ctx *ctx,
+				 int dst_reg)
+{
+	return 0;
+}
+#else
 static int add_exception_handler(const struct bpf_insn *insn,
 				 struct jit_ctx *ctx,
 				 int dst_reg)
@@ -1198,6 +1222,7 @@ static int add_exception_handler(const struct bpf_insn *insn,
 	ctx->exentry_idx++;
 	return 0;
 }
+#endif
 
 /* JITs an eBPF instruction.
  * Returns:
