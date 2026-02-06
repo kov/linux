@@ -24,10 +24,6 @@ void clear_flushed_tls(struct task_struct *task)
 
 int arch_set_tls(struct task_struct *t, unsigned long tls)
 {
-	/*
-	 * Store TLS value in arch_thread structure
-	 * It will be saved/restored automatically via ptrace
-	 */
-	t->thread.arch.tpidr_el0 = tls;
+	t->thread.regs.regs.tpidr_el0 = tls;
 	return 0;
 }
