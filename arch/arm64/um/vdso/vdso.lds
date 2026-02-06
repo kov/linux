@@ -83,7 +83,7 @@
  */
 SECTIONS
 {
- . = 0x0000fffffffff000 + SIZEOF_HEADERS;
+ . = 0 + SIZEOF_HEADERS;
  .hash : { *(.hash) } :text
  .gnu.hash : { *(.gnu.hash) }
  .dynsym : { *(.dynsym) }
@@ -129,6 +129,11 @@ PHDRS
 /*
  * This controls what userland symbols we export from the vDSO.
  */
+/*
+ * Make the sigreturn code visible to the kernel by aliasing its symbol
+ * to a VDSO_* name (used by gen_vdso_offsets.sh).
+ */
+VDSO_sigtramp = __kernel_rt_sigreturn;
 VERSION {
  LINUX_2.6 {
  global:
@@ -136,6 +141,7 @@ VERSION {
   __vdso_clock_gettime;
   gettimeofday;
   __vdso_gettimeofday;
+  __kernel_rt_sigreturn;
  local: *;
  };
 }

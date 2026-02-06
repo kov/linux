@@ -115,6 +115,16 @@ archheaders:
 archprepare:
 	$(Q)$(MAKE) $(build)=$(HOST_DIR)/um include/generated/user_constants.h
 
+ifeq ($(KBUILD_EXTMOD),)
+ifdef CONFIG_UML_ARM64
+# Generate vdso-offsets.h before compiling signal.c (arm64 UML only)
+prepare: vdso_prepare
+vdso_prepare: prepare0
+	$(Q)$(MAKE) $(build)=arch/arm64/um/vdso \
+	include/generated/vdso-offsets.h arch/arm64/um/vdso/vdso.so
+endif
+endif
+
 LINK-$(CONFIG_LD_SCRIPT_STATIC) += -static
 LINK-$(CONFIG_LD_SCRIPT_DYN) += -no-pie
 LINK-$(CONFIG_LD_SCRIPT_DYN_RPATH) += -Wl,-rpath,/lib

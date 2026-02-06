@@ -14,9 +14,12 @@
 #include <asm/user.h>
 #include <asm/ucontext.h>
 #include <asm/sigframe.h>
+#include <generated/vdso-offsets.h>
 #include <frame_kern.h>
 #include <registers.h>
 #include <skas.h>
+
+extern unsigned long um_vdso_addr;
 
 /* Prototypes for functions defined in this file to satisfy -Wmissing-prototypes */
 int setup_signal_stack(unsigned long stack_top, struct ksignal *ksig,
@@ -205,13 +208,7 @@ int setup_signal_stack_si(unsigned long stack_top, struct ksignal *ksig,
 {
 	struct rt_sigframe __user *frame;
 	unsigned long sp;
-	unsigned long restorer;
 	int err = 0;
-	u32 __user *retcode;
-
-#define ARM64_RT_SIGRETURN_MOV_X8 \
-	(0xd2800000 | ((__NR_rt_sigreturn & 0xffff) << 5) | HOST_X8)
-#define ARM64_RT_SIGRETURN_SVC 0xd4000001
 
 	/* Allocate space for signal frame on stack */
 	sp = stack_top - sizeof(struct rt_sigframe);
@@ -220,7 +217,6 @@ int setup_signal_stack_si(unsigned long stack_top, struct ksignal *ksig,
 	sp &= ~15UL;
 
 	frame = (struct rt_sigframe __user *)sp;
-	restorer = sp + sizeof(struct rt_sigframe);
 
 	/* Check frame is accessible */
 	if (!access_ok(frame, sizeof(*frame)))
@@ -270,19 +266,17 @@ int setup_signal_stack_si(unsigned long stack_top, struct ksignal *ksig,
 	}
 
 	/*
-	 * Set up return trampoline (restorer)
-	 * On ARM64, the restorer calls rt_sigreturn syscall
+	 * Set up return trampoline (restorer).
+	 *
+	 * If the caller specified SA_RESTORER, use that. Otherwise use
+	 * the sigreturn trampoline in the VDSO (the same approach as
+	 * native arm64).  An on-stack trampoline does not work because
+	 * modern stacks are non-executable.
 	 */
 	if (ksig->ka.sa.sa_flags & SA_RESTORER)
 		regs->regs.gp[HOST_LR] = (unsigned long)ksig->ka.sa.sa_restorer;
-	else {
-		retcode = (u32 __user *)restorer;
-		err |= __put_user(ARM64_RT_SIGRETURN_MOV_X8, &retcode[0]);
-		err |= __put_user(ARM64_RT_SIGRETURN_SVC, &retcode[1]);
-		if (err)
-			return err;
-		regs->regs.gp[HOST_LR] = restorer;
-	}
+	else
+		regs->regs.gp[HOST_LR] = um_vdso_addr + vdso_offset_sigtramp;
 
 	return 0;
 }

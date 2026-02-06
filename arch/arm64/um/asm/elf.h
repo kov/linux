@@ -76,4 +76,19 @@ extern char *elf_aux_platform;
 #define R_AARCH64_ABS32		258
 #define R_AARCH64_RELATIVE	1027
 
+/*
+ * vDSO support - map the vDSO page into each new process and pass its
+ * address via AT_SYSINFO_EHDR so that glibc/ld.so can locate it.
+ */
+#define ARCH_HAS_SETUP_ADDITIONAL_PAGES 1
+struct linux_binprm;
+extern int arch_setup_additional_pages(struct linux_binprm *bprm,
+	int uses_interp);
+
+extern unsigned long um_vdso_addr;
+#ifndef AT_SYSINFO_EHDR
+#define AT_SYSINFO_EHDR 33
+#endif
+#define ARCH_DLINFO	NEW_AUX_ENT(AT_SYSINFO_EHDR, um_vdso_addr)
+
 #endif /* __UM_ARM64_ELF_H */

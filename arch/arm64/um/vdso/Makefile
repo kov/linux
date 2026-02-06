@@ -6,7 +6,7 @@
 vdso-install-y += vdso.so
 
 # files to link into the vdso
-vobjs-y := vdso-note.o um_vdso.o
+vobjs-y := vdso-note.o um_vdso.o sigreturn.o
 
 # files to link into kernel
 obj-y += vdso.o vma.o
@@ -48,6 +48,7 @@ $(vobjs): KBUILD_CFLAGS += $(CFL)
 #
 CFLAGS_REMOVE_vdso-note.o = -pg -fprofile-arcs -ftest-coverage
 CFLAGS_REMOVE_um_vdso.o = -pg -fprofile-arcs -ftest-coverage
+CFLAGS_REMOVE_sigreturn.o = -pg -fprofile-arcs -ftest-coverage
 
 #
 # The DSO images are built using a special linker script.
@@ -58,3 +59,14 @@ quiet_cmd_vdso = VDSO    $@
 		       -Wl,-T,$(filter %.lds,$^) $(filter %.o,$^)
 
 VDSO_LDFLAGS = -fPIC -shared -Wl,--hash-style=sysv -z noexecstack -Wl,--no-undefined
+
+#
+# Generate vDSO offsets header from the DSO image
+#
+gen-vdsosym := $(srctree)/arch/arm64/kernel/vdso/gen_vdso_offsets.sh
+
+quiet_cmd_vdsosym = VDSOSYM $@
+      cmd_vdsosym = $(NM) $< | $(gen-vdsosym) | LC_ALL=C sort > $@
+
+include/generated/vdso-offsets.h: $(obj)/vdso.so.dbg FORCE
+	$(call if_changed,vdsosym)
