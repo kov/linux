@@ -12,8 +12,6 @@
 #include <linux/init.h>
 #include <linux/binfmts.h>
 
-extern int arch_setup_additional_pages(struct linux_binprm *bprm, int uses_interp);
-
 unsigned long um_vdso_addr;
 static struct page *um_vdso;
 
@@ -55,5 +53,8 @@ int arch_setup_additional_pages(struct linux_binprm *bprm, int uses_interp)
 
 	mmap_write_unlock(mm);
 
-	return IS_ERR(vma) ? PTR_ERR(vma) : 0;
+	if (IS_ERR(vma))
+		return PTR_ERR(vma);
+
+	return 0;
 }
