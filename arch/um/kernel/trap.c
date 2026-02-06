@@ -218,6 +218,19 @@ retry:
 #if 0
 	WARN_ON(!pte_young(*pte) || (is_write && !pte_dirty(*pte)));
 #endif
+	/*
+	 * If handle_mm_fault succeeded but didn't call set_ptes (e.g.
+	 * the PTE was already present and correct from the guest's
+	 * perspective), the TLB sync range will be empty. However, the
+	 * host mapping may be stale (e.g. mapped as PROT_NONE by a
+	 * previous page aging cycle). Force a TLB sync for the faulting
+	 * page to ensure the host mapping matches the guest PTE state.
+	 */
+	if (is_user && mm->context.sync_tlb_range_to == 0) {
+		*pte = pte_mkneedsync(*pte);
+		um_tlb_mark_sync(mm, address & PAGE_MASK,
+				 (address & PAGE_MASK) + PAGE_SIZE);
+	}
 
 out:
 	mmap_read_unlock(mm);
@@ -354,9 +367,9 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
 
 	si_code = -1;
 	if (SEGV_IS_FIXABLE(&fi)) {
-	err = handle_page_fault(address, ip, is_write, is_user,
+		err = handle_page_fault(address, ip, is_write, is_user,
 					&si_code);
-} else {
+	} else {
 		err = -EFAULT;
 		/*
 		 * A thread accessed NULL, we get a fault, but CR2 is invalid.

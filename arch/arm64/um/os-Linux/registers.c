@@ -345,15 +345,62 @@ static bool arm64_sig_is_store(struct mm_id *mm_id, unsigned long pc,
 		*insn_out = insn;
 
 	/*
-	 * Heuristic decode for common A64 load/store encodings:
-	 * - Unsigned immediate: 0x39000000 class, L bit at 22.
-	 * - Unscaled/pre/post: 0x38000000 class, L bit at 22.
-	 * - Pair (LDP/STP): 0x29000000 class, L bit at 22.
-	 * - DC ZVA (cache line zero) is a write-like operation.
+	 * Heuristic decode for common A64 load/store encodings.
+	 *
+	 * Load/Store Exclusive & Compare-And-Swap (0x08 class):
+	 *   bits[29:24] = 001000
+	 *   CAS/CASP (bit[23]=1, bit[21]=1): always read-modify-write
+	 *   STXR/STLXR/STLR etc (bit[22]=0): store
+	 *   LDXR/LDAXR/LDAR etc (bit[22]=1): load
+	 *
+	 * For unsigned immediate (0x39) and unscaled/pre/post/register
+	 * offset (0x38) classes, the decode depends on the V bit (bit 26):
+	 *
+	 * When V=0 (integer), bits [23:22] encode opc[1:0]:
+	 *   opc=00 → store (STR/STRB/STRH)
+	 *   opc=01 → unsigned load (LDR/LDRB/LDRH)
+	 *   opc=10 → signed load (LDRSW/LDRSB/LDRSH)
+	 *   opc=11 → signed load (32-bit) or PRFM
+	 * Only opc==00 is a store.
+	 * Exception: Atomic memory operations (V=0, bit[21]=1,
+	 *   bits[11:10]=00) like SWP, LDADD, LDCLR etc. are all
+	 *   read-modify-write and treated as stores.
+	 *
+	 * When V=1 (SIMD/FP), the opc field encodes size, not direction:
+	 *   opc=00 → STR (8/16/32/64-bit)
+	 *   opc=01 → LDR (8/16/32/64-bit)
+	 *   opc=10 → STR Q (128-bit)
+	 *   opc=11 → LDR Q (128-bit)
+	 * Bit 22 alone is the load/store indicator.
+	 *
+	 * For load/store pairs (0x29 class), bit 22 is the L-bit
+	 * directly (L=0 store, L=1 load) for both integer and SIMD.
+	 *
+	 * DC ZVA (cache line zero) is a write-like operation.
 	 */
+
+	/* Load/Store Exclusive & CAS: bits[29:24] = 001000 */
+	if ((insn & 0x3F000000) == 0x08000000) {
+		/* CAS/CASP (bit[23]=1, bit[21]=1): read-modify-write */
+		if ((insn & (1U << 23)) && (insn & (1U << 21)))
+			return true;
+		/* Others: bit[22] is L-bit (L=0 store, L=1 load) */
+		return !(insn & (1U << 22));
+	}
+
 	if (((insn & 0x3b000000) == 0x39000000) ||
-	    ((insn & 0x3b000000) == 0x38000000) ||
-	    ((insn & 0x3b000000) == 0x29000000))
+	    ((insn & 0x3b000000) == 0x38000000)) {
+		/* Atomic memory ops: V=0, bit[21]=1, bits[11:10]=00 */
+		if (!(insn & (1U << 26)) && (insn & (1U << 21)) &&
+		    !(insn & (3U << 10)))
+			return true;
+		if (insn & (1U << 26))	/* V=1: SIMD/FP */
+			return !(insn & (1U << 22));
+		else			/* V=0: integer */
+			return (insn & (3U << 22)) == 0;
+	}
+
+	if ((insn & 0x3b000000) == 0x29000000)
 		return !(insn & (1U << 22));
 
 	if ((insn & 0xffffffe0) == 0xd50b7420)
@@ -388,8 +435,7 @@ void os_get_faultinfo(int pid, struct faultinfo *fi, void *si,
 		fi->trap_no = ESR_ELx_EC_DABT_LOW;
 
 	if (fi->trap_no == ESR_ELx_EC_DABT_LOW &&
-	    (arm64_sig_is_store(current_mm_id(), pc, NULL) ||
-	     (siginfo && siginfo->si_code == SEGV_ACCERR)))
+	    arm64_sig_is_store(current_mm_id(), pc, NULL))
 		fi->error_code |= ESR_ELx_WNR;
 }
 
