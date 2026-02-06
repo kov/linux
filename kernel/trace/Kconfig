@@ -849,7 +849,7 @@ config EPROBE_EVENTS
 
 config BPF_EVENTS
 	depends on BPF_SYSCALL
-	depends on (KPROBE_EVENTS || UPROBE_EVENTS) && PERF_EVENTS
+	depends on (KPROBE_EVENTS || UPROBE_EVENTS || TRACING) && PERF_EVENTS
 	bool
 	default y
 	help
