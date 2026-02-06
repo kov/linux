@@ -26,11 +26,6 @@ struct arch_thread {
 	unsigned long debugregs[16];
 
 	/*
-	 * TLS pointer (TPIDR_EL0 register value)
-	 */
-	unsigned long tpidr_el0;
-
-	/*
 	 * Single-step state
 	 */
 	int singlestep_syscall;
@@ -46,7 +41,6 @@ struct arch_thread {
  */
 #define INIT_ARCH_THREAD { \
 	.debugregs = { [0 ... 15] = 0 }, \
-	.tpidr_el0 = 0, \
 	.singlestep_syscall = 0, \
 	.faultinfo = { 0, 0, 0 } \
 }
