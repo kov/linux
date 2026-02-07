@@ -43,18 +43,24 @@ void handle_syscall(struct uml_pt_regs *r)
 
 	syscall = UPT_SYSCALL_NR(r);
 
+	if (syscall_trace_enter(regs))
+		goto out;
+
+	/* Re-read in case tracer changed it */
+	syscall = UPT_SYSCALL_NR(r);
+
 	if (syscall >= 0 && syscall < __NR_syscalls) {
 		unsigned long ret;
-
-
 
 		ret = (*sys_call_table[syscall])(regs);
 
 		PT_REGS_SET_SYSCALL_RETURN(regs, ret);
-
 	} else {
 		PT_REGS_SET_SYSCALL_RETURN(regs, -ENOSYS);
 	}
+
+out:
+	syscall_trace_leave(regs);
 
 	/*
 	 * This should do all the signal delivery and notification
