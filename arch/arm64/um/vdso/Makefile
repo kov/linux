@@ -13,8 +13,6 @@ obj-y += vdso.o vma.o
 
 vobjs := $(foreach F,$(vobjs-y),$(obj)/$F)
 
-$(obj)/vdso.o: $(obj)/vdso.so
-
 targets += vdso.so vdso.so.dbg vdso.lds $(vobjs-y)
 
 CPPFLAGS_vdso.lds += -P -C
