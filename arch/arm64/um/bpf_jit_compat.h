@@ -61,4 +61,11 @@ enum arm_smccc_conduit {
  */
 #define UM_BPF_JIT_COMPAT_EXTABLE
 
+/*
+ * BPF JIT emits MRS SP_EL0 to get 'current' — on UML we load from cpu_tasks[].
+ * Forward-declare it here so bpf_jit_comp.c can reference it.
+ */
+struct task_struct;
+extern struct task_struct *cpu_tasks[];
+
 #endif /* __UM_BPF_JIT_COMPAT_H */

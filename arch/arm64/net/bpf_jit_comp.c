@@ -193,10 +193,16 @@ static inline void emit_kcfi(u32 hash, struct jit_ctx *ctx)
  * Kernel addresses in the vmalloc space use at most 48 bits, and the
  * remaining bits are guaranteed to be 0x1. So we can compose the address
  * with a fixed length movn/movk/movk sequence.
+ *
+ * On UML, kernel addresses are in the host userspace range (top bits 0,
+ * not 1), so this assumption doesn't hold — use the general mov_i64.
  */
 static inline void emit_addr_mov_i64(const int reg, const u64 val,
 				     struct jit_ctx *ctx)
 {
+#ifdef CONFIG_UML
+	emit_a64_mov_i64(reg, val, ctx);
+#else
 	u64 tmp = val;
 	int shift = 0;
 
@@ -206,6 +212,7 @@ static inline void emit_addr_mov_i64(const int reg, const u64 val,
 		shift += 16;
 		emit(A64_MOVK(1, reg, tmp & 0xffff, shift), ctx);
 	}
+#endif
 }
 
 static bool should_emit_indirect_call(long target, const struct jit_ctx *ctx)
@@ -491,14 +498,19 @@ static void pop_callee_regs(struct jit_ctx *ctx)
 static void emit_percpu_ptr(const u8 dst_reg, void __percpu *ptr,
 			    struct jit_ctx *ctx)
 {
-	const u8 tmp = bpf2a64[TMP_REG_1];
-
 	emit_a64_mov_i64(dst_reg, (__force const u64)ptr, ctx);
-	if (cpus_have_cap(ARM64_HAS_VIRT_HOST_EXTN))
-		emit(A64_MRS_TPIDR_EL2(tmp), ctx);
-	else
-		emit(A64_MRS_TPIDR_EL1(tmp), ctx);
-	emit(A64_ADD(1, dst_reg, dst_reg, tmp), ctx);
+#ifndef CONFIG_UML
+	{
+		const u8 tmp = bpf2a64[TMP_REG_1];
+
+		if (cpus_have_cap(ARM64_HAS_VIRT_HOST_EXTN))
+			emit(A64_MRS_TPIDR_EL2(tmp), ctx);
+		else
+			emit(A64_MRS_TPIDR_EL1(tmp), ctx);
+		emit(A64_ADD(1, dst_reg, dst_reg, tmp), ctx);
+	}
+#endif
+	/* UML is always single-CPU, per-CPU offset is 0 — no adjustment needed */
 }
 
 #define BTI_INSNS (IS_ENABLED(CONFIG_ARM64_BTI_KERNEL) ? 1 : 0)
@@ -1271,11 +1283,14 @@ static int build_insn(const struct bpf_insn *insn, struct jit_ctx *ctx,
 		} else if (insn_is_mov_percpu_addr(insn)) {
 			if (dst != src)
 				emit(A64_MOV(1, dst, src), ctx);
+#ifndef CONFIG_UML
 			if (cpus_have_cap(ARM64_HAS_VIRT_HOST_EXTN))
 				emit(A64_MRS_TPIDR_EL2(tmp), ctx);
 			else
 				emit(A64_MRS_TPIDR_EL1(tmp), ctx);
 			emit(A64_ADD(1, dst, dst, tmp), ctx);
+#endif
+			/* UML: per-CPU offset is always 0, no adjustment */
 			break;
 		}
 		switch (insn->off) {
@@ -1603,11 +1618,15 @@ emit_cond_jmp:
 		const u8 r0 = bpf2a64[BPF_REG_0];
 		bool func_addr_fixed;
 		u64 func_addr;
-		u32 cpu_offset;
 
 		/* Implement helper call to bpf_get_smp_processor_id() inline */
 		if (insn->src_reg == 0 && insn->imm == BPF_FUNC_get_smp_processor_id) {
-			cpu_offset = offsetof(struct thread_info, cpu);
+#ifdef CONFIG_UML
+			/* UML is always single-CPU, return 0 */
+			emit(A64_MOVZ(1, r0, 0, 0), ctx);
+#else
+			{
+			u32 cpu_offset = offsetof(struct thread_info, cpu);
 
 			emit(A64_MRS_SP_EL0(tmp), ctx);
 			if (is_lsi_offset(cpu_offset, 2)) {
@@ -1616,13 +1635,21 @@ emit_cond_jmp:
 				emit_a64_mov_i(1, tmp2, cpu_offset, ctx);
 				emit(A64_LDR32(r0, tmp, tmp2), ctx);
 			}
+			}
+#endif
 			break;
 		}
 
 		/* Implement helper call to bpf_get_current_task/_btf() inline */
 		if (insn->src_reg == 0 && (insn->imm == BPF_FUNC_get_current_task ||
 					   insn->imm == BPF_FUNC_get_current_task_btf)) {
+#ifdef CONFIG_UML
+			/* UML: load current from cpu_tasks[0] */
+			emit_a64_mov_i64(tmp, (u64)&cpu_tasks[0], ctx);
+			emit(A64_LDR64I(r0, tmp, 0), ctx);
+#else
 			emit(A64_MRS_SP_EL0(r0), ctx);
+#endif
 			break;
 		}
 
