@@ -22,6 +22,7 @@
 #include <um_malloc.h>
 #include <linux/sched/task.h>
 #include <linux/kasan.h>
+#include <linux/numa.h>
 
 #ifdef CONFIG_KASAN
 void __init kasan_init(void)
@@ -47,6 +48,19 @@ __section(".kasan_init") __used
 /* allocated in paging_init, zeroed in mem_init, and unchanged thereafter */
 unsigned long *empty_zero_page = NULL;
 EXPORT_SYMBOL(empty_zero_page);
+
+#ifdef CONFIG_NUMA
+/*
+ * UML uses FLATMEM but CONFIG_NUMA can be enabled for syscall compatibility.
+ * Provide mem_map/max_mapnr (normally only defined for !NUMA) and set up
+ * node_data[0] so the single-node NUMA topology works.
+ */
+unsigned long max_mapnr;
+EXPORT_SYMBOL(max_mapnr);
+
+struct page *mem_map;
+EXPORT_SYMBOL(mem_map);
+#endif
 
 /*
  * Initialized during boot, and readonly for initializing page tables
@@ -93,6 +107,21 @@ void __init paging_init(void)
 	if (!empty_zero_page)
 		panic("%s: Failed to allocate %lu bytes align=%lx\n",
 		      __func__, PAGE_SIZE, PAGE_SIZE);
+
+#ifdef CONFIG_NUMA
+	/*
+	 * Allocate pglist_data for node 0. free_area_init() needs
+	 * NODE_DATA(0) to be valid. UML only has a single node.
+	 */
+	node_data[0] = memblock_alloc_low(sizeof(pg_data_t), SMP_CACHE_BYTES);
+	if (!node_data[0])
+		panic("Failed to allocate node_data for node 0\n");
+	memset(node_data[0], 0, sizeof(pg_data_t));
+
+	/* Assign all memory to node 0 so free_area_init finds it */
+	memblock_set_node(0, PHYS_ADDR_MAX, &memblock.memory, 0);
+	memblock_set_node(0, PHYS_ADDR_MAX, &memblock.reserved, 0);
+#endif
 
 	max_zone_pfn[ZONE_NORMAL] = high_physmem >> PAGE_SHIFT;
 	free_area_init(max_zone_pfn);

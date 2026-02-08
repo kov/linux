@@ -240,6 +240,17 @@ config KERNEL_STACK_ORDER
 	  increase in the size of the state which needs to be saved when handling
 	  signals.
 
+config NUMA
+	bool "Simulate NUMA support"
+	default n
+	help
+	  Simulate a single-node NUMA system so that NUMA syscalls (mbind,
+	  set_mempolicy, get_mempolicy, migrate_pages, etc.) succeed
+	  instead of returning ENOSYS. This allows applications that use
+	  libnuma or make NUMA syscalls to run unmodified under UML.
+
+	  UML always presents a single NUMA node with all memory.
+
 config PGTABLE_LEVELS
 	int
 	default 4 if 64BIT
