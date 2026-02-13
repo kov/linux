@@ -41,6 +41,10 @@ void handle_syscall(struct uml_pt_regs *r)
 	struct pt_regs *regs = container_of(r, struct pt_regs, regs);
 	long syscall;
 
+	/* Save original x0 for syscall restart — on ARM64, x0 is both
+	 * the first argument and the return value register */
+	r->orig_x0 = r->gp[0];
+
 	syscall = UPT_SYSCALL_NR(r);
 
 	if (syscall_trace_enter(regs))
