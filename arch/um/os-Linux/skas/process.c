@@ -639,6 +639,66 @@ void userspace(struct uml_pt_regs *regs)
 				fatal_sigsegv();
 			}
 
+#ifdef __aarch64__
+			/*
+			 * Work around ARM64 host kernel ptrace ABI quirk:
+			 * report_syscall() in the host kernel clobbers x7
+			 * to 0 at every SYSEMU stop (to indicate syscall-entry
+			 * direction), then restores it from a local variable
+			 * after the tracer resumes — overwriting whatever the
+			 * tracer wrote via PTRACE_SETREGSET.
+			 *
+			 * To read the real x7, send SIGSTOP to the child,
+			 * PTRACE_CONT past the SYSEMU stop (which skips the
+			 * actual syscall), wait for the SIGSTOP delivery,
+			 * and re-read registers.  At a signal-delivery stop
+			 * x7 is not clobbered.
+			 */
+			if (WIFSTOPPED(status) &&
+			    WSTOPSIG(status) == (SIGTRAP | 0x80)) {
+				int st2;
+				int got_sigstop = 0;
+
+				kill(pid, SIGSTOP);
+				ptrace(PTRACE_CONT, pid, 0, 0);
+
+				CATCH_EINTR(err = waitpid(pid, &st2,
+							  WUNTRACED | __WALL));
+
+				if (WIFSTOPPED(st2) &&
+				    WSTOPSIG(st2) == SIGSTOP) {
+					got_sigstop = 1;
+				} else if (WIFSTOPPED(st2)) {
+					/*
+					 * Got a different signal before our
+					 * SIGSTOP.  Suppress it so we can
+					 * consume the pending SIGSTOP, then
+					 * re-inject it afterward.
+					 */
+					int pending_sig = WSTOPSIG(st2);
+
+					ptrace(PTRACE_CONT, pid, 0, 0);
+					CATCH_EINTR(err = waitpid(pid, &st2,
+								  WUNTRACED | __WALL));
+					got_sigstop = (WIFSTOPPED(st2) &&
+						       WSTOPSIG(st2) == SIGSTOP);
+
+					/* Re-send the original signal so the
+					 * normal handling path picks it up on
+					 * the next SYSEMU iteration */
+					if (got_sigstop)
+						kill(pid, pending_sig);
+				}
+
+				if (got_sigstop) {
+					unsigned long tmp_gp[MAX_REG_NR];
+
+					if (ptrace_getregs(pid, tmp_gp) == 0)
+						regs->gp[7] = tmp_gp[7];
+				}
+			}
+#endif
+
 			if (get_fp_registers(pid, regs->fp)) {
 				printk(UM_KERN_ERR "%s -  get_fp_registers failed, errno = %d\n",
 				       __func__, errno);
