@@ -48,7 +48,7 @@ static inline void syscall_get_arguments(struct task_struct *task,
 					 struct pt_regs *regs,
 					 unsigned long *args)
 {
-	args[0] = UPT_SYSCALL_ARG1(&regs->regs);
+	args[0] = regs->regs.orig_x0;
 	args[1] = UPT_SYSCALL_ARG2(&regs->regs);
 	args[2] = UPT_SYSCALL_ARG3(&regs->regs);
 	args[3] = UPT_SYSCALL_ARG4(&regs->regs);
@@ -96,8 +96,7 @@ static inline void syscall_set_nr(struct task_struct *task,
 static inline void syscall_rollback(struct task_struct *task,
 				    struct pt_regs *regs)
 {
-	/* Restore syscall number from x8 - for ARM64, we don't have orig_syscall */
-	/* No action needed as syscall number is still in x8 */
+	regs->regs.gp[0] = regs->regs.orig_x0;
 }
 
 #endif /* __UM_ARM64_SYSCALL_H */

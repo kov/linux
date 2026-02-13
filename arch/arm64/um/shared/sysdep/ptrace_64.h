@@ -183,8 +183,10 @@
 /*
  * Restart syscall - decrement PC by 4 to re-execute SVC instruction
  */
-#define UPT_RESTART_SYSCALL(r) \
-	(UPT_PC(r) -= 4)
+#define UPT_RESTART_SYSCALL(r) do { \
+	UPT_PC(r) -= 4; \
+	(r)->gp[0] = (r)->orig_x0; \
+} while (0)
 
 /*
  * PSTATE bits we care about
@@ -233,6 +235,7 @@ struct uml_pt_regs {
 	struct faultinfo faultinfo;     /* Fault information */
 	long syscall;                   /* Current syscall number */
 	int is_user;                    /* Running in user mode? */
+	unsigned long orig_x0;          /* Saved x0 for syscall restart */
 	unsigned long tpidr_el0;        /* ARM64 TLS Register */
 	unsigned long _pad; /* Align fp to 16 bytes for SIMD access */
 
