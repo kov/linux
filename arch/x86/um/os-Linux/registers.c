@@ -6,6 +6,8 @@
 
 #include <errno.h>
 #include <stdlib.h>
+#include <string.h>
+#include <signal.h>
 #include <sys/ptrace.h>
 #ifdef __i386__
 #include <sys/user.h>
@@ -13,12 +15,16 @@
 #include <longjmp.h>
 #include <sysdep/ptrace_user.h>
 #include <sys/uio.h>
-#include <asm/sigcontext.h>
 #include <linux/elf.h>
+#include <kern_util.h>
 #include <registers.h>
+#include <stub-data.h>
 #include <sys/mman.h>
 #include <skas.h>
 #include <os.h>
+
+/* From arch/um/os-Linux/internal.h */
+void wait_stub_done(int pid);
 
 static unsigned long ptrace_regset;
 unsigned long host_fp_size;
@@ -108,8 +114,6 @@ unsigned long get_thread_reg(int reg, jmp_buf *buf)
 		       reg);
 		return 0;
 	}
-}
-}
 }
 
 static const char *ptrace_reg_name(int idx)
