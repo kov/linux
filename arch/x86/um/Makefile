@@ -27,6 +27,8 @@ subarch-y += ../kernel/sys_ia32.o
 else
 
 obj-y += mem_64.o syscalls_64.o vdso/
+CFLAGS_bpf_jit_comp.o := -include $(srctree)/arch/x86/um/bpf_jit_compat.h
+obj-$(CONFIG_BPF_JIT) += bpf_jit_comp.o bpf_jit_stubs.o ../net/bpf_timed_may_goto.o
 
 subarch-y = ../lib/csum-partial_64.o ../lib/memcpy_64.o \
 	../lib/memmove_64.o ../lib/memset_64.o
